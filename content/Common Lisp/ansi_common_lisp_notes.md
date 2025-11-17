@@ -7,6 +7,24 @@ draft: false
 
 [ANSI Common Lisp 中文版](https://acl.readthedocs.io/en/latest/index.html)
 
+对于没有输出的表达式，org 并不会捕获输出，而需要明确使用 print 或 format。为了方便输出特别定义宏 output（op）
+
+```lisp
+(defmacro op (&rest expressions)
+  `(progn
+     ,@(loop for expr in expressions
+             collect `(format t "~A~%" ,expr))))
+
+(op
+ (+ 12 12 )
+ (- 100 1))
+```
+
+```text
+24
+99
+```
+
 
 ## 第一章：简介 {#第一章-简介}
 
@@ -2054,3 +2072,1503 @@ pushnew 宏是 push 的变种，使用了 adjoin 而不是 cons ：
 {{< figure src="/images/一个点状列表.png" >}}
 
 这样的 Cons 对象看起来像正规列表，除了最后一个 cdr 前面有一个句点。这个列表的结构展示上图 ; 注意它跟图 [1](#figure--fig:Figure-3.1.threelist) 是多么的相似。
+
+所以实际上你可以这么表示列表 (a b) ，
+
+```latex
+(a . (b . nil))
+(a . (b))
+(a b . nil)
+(a b)
+```
+
+
+### 3.14 关联列表 (Assoc-lists) {#3-dot-14-关联列表--assoc-lists}
+
+用 Cons 对象来表示映射 (mapping)也是很自然的。一个由 Cons 对象组成的列表称之为关联列表(assoc-listor alist)。这样的列表可以表示一个翻译的集合，举例来说：
+
+```lisp
+(setf trans '((+ . "add") (- . "subtract")))
+(princ trans)
+```
+
+```text
+((+ . add) (- . subtract))
+```
+
+关联列表很慢，但是在初期的程序中很方便。 Common Lisp 有一个内置的函数 assoc ，用来取出在关联列表中，与给定的键值有关联的 Cons 对：
+
+```lisp
+(princ (assoc '+ trans))
+(print (assoc '* trans))          ; 如果 assoc 没有找到要找的东西时，返回 nil 。
+```
+
+```text
+(+ . add)
+NIL
+```
+
+以下是简化的 assoc 实现：
+
+```lisp
+(defun our-assoc (key alist)
+  (and (consp alist)
+       (let ((pair (car alist)))
+         (if (eql key (car pair))
+             pair
+             (our-assoc key (cdr alist))))))
+
+(princ (our-assoc '+ trans))
+(print (our-assoc '* trans))
+(print (our-assoc '- trans))
+```
+
+```text
+(+ . add)
+NIL
+(- . "subtract")
+```
+
+和 member 一样，实际上的 assoc 接受关键字参数，包括 :test 和 :key 。 Common Lisp 也定义了一个 assoc-if 之于 assoc ，如同 member-if 之于 member 一样。
+
+
+### 3.15 示例：最短路径 (Example: Shortest Path) {#3-dot-15-示例-最短路径--example-shortest-path}
+
+以下是包含一个搜索网络中最短路径的程序。函数 shortest-path 接受一个起始节点，目的节点以及一个网络，并返回最短路径，如果有的话。
+
+```lisp
+;; 广度优先搜索
+(defun shortest-path (start end net)
+  (bfs end (list (list start)) net))
+
+(defun bfs (end queue net)
+  (format t  "~%log-bfs:[~A | ~A]" end queue)
+  (if (null queue)
+      nil
+      (let ((path (car queue)))
+        (let ((node (car path)))
+          (if (eql node end)
+              (reverse path)
+              (bfs end
+                   (append (cdr queue)
+                           (new-paths path node net))
+                   net))))))
+
+(defun new-paths (path node net)
+ (format t "~%log-new-paths:[~A | ~A]~%" path node)
+  (mapcar #'(lambda (n)
+              (cons n path))
+          (cdr (assoc node net))))
+
+(setf myMap '((a b c) (b c) (c d)))
+
+(princ (shortest-path 'a 'd myMap))
+```
+
+```text
+
+log-bfs:[D | ((A))]
+log-new-paths:[(A) | A]
+
+log-bfs:[D | ((B A) (C A))]
+log-new-paths:[(B A) | B]
+
+log-bfs:[D | ((C A) (C B A))]
+log-new-paths:[(C A) | C]
+
+log-bfs:[D | ((C B A) (D C A))]
+log-new-paths:[(C B A) | C]
+
+log-bfs:[D | ((D C A) (D C B A))](A C D)
+```
+
+在这个范例中，节点用符号表示，而网络用含以下元素形式的关联列表来表示：(node . neighbors)
+
+所以由下图展示的最小网络 (minimal network)可以这样来表示：
+
+{{< figure src="/images/最小网络.png" >}}
+
+上图包含一个图，我们需要找到两点之间的最短路径。
+
+
+### 3.16 垃圾 (Garbages) {#3-dot-16-垃圾--garbages}
+
+自动内存管理(Automatic memory management)是 Lisp 最有价值的特色之一。 Lisp 系统维护着一段內存称之为堆(Heap)。系统持续追踪堆当中没有使用的内存，把这些内存发放给新产生的对象。举例来说，函数 cons ，返回一个新配置的 Cons 对象。从堆中配置内存有时候通称为 consing 。
+
+如果内存永远没有释放， Lisp 会因为创建新对象把内存用完，而必须要关闭。所以系统必须周期性地通过搜索堆 (heap)，寻找不需要再使用的内存。不需要再使用的内存称之为垃圾 (garbage)，而清除垃圾的动作称为垃圾回收 (garbage collection或 GC)。
+
+垃圾是从哪来的？让我们来创造一些垃圾：
+
+```lisp
+(setf lst (list 'a 'b 'c))
+(setf lst nil)
+```
+
+因为我们没有任何方法再存取列表，它也有可能是不存在的。我们不再有任何方式可以存取的对象叫做垃圾。系统可以安全地重新使用这三个 Cons 核。
+
+这种管理內存的方法，给程序员带来极大的便利性。你不用显式地配置 (allocate)或释放 (dellocate)內存。这也表示了你不需要处理因为这么做而可能产生的臭虫。內存泄漏 (Memory leaks)以及迷途指针 (dangling pointer)在 Lisp 中根本不可能发生。
+
+
+### 总结 (Summary) {#总结--summary}
+
+-   一个 Cons 是一个含两部分的数据结构。列表用链结在一起的 Cons 组成。
+
+-   判断式 equal 比 eql 来得不严谨。基本上，如果传入参数印出来的值一样时，返回真。
+
+-   所有 Lisp 对象表现得像指针。你永远不需要显式操作指针。
+
+-   你可以使用 copy-list 复制列表，并使用 append 来连接它们的元素。
+
+-   游程编码是一个餐厅中使用的简单压缩演算法。
+
+-   Common Lisp 有由 car 与 cdr 定义的多种存取函数。
+
+-   映射函数将函数应用至逐项的元素，或逐项的列表尾端。
+
+-   嵌套列表的操作有时被考虑为树的操作。
+
+-   要判断一个递归函数是否正确，你只需要考虑是否包含了所有情况。
+
+-   列表可以用来表示集合。数个内置函数把列表当作集合。
+
+-   关键字参数是选择性的，并不是由位置所识别，是用符号前面的特殊标签来识别。
+
+-   列表是序列的子类型。 Common Lisp 有大量的序列函数。
+
+-   一个不是正规列表的 Cons 称之为点状列表。
+
+-   用 cons 对象作为元素的列表，可以拿来表示对应关系。这样的列表称为关联列表(assoc-lists)。
+
+-   自动内存管理拯救你处理内存配置的烦恼，但制造过多的垃圾会使程序变慢。
+
+
+## 第四章：特殊数据结构 {#第四章-特殊数据结构}
+
+
+### 4.1 数组（Array） {#4-dot-1-数组-array}
+
+调用 make-array 来构造一个数组，第一个实参为一个指定数组维度的列表。要构造一个 2 x 3 的数组，我们可以：
+
+```lisp
+(setf arr (make-array '(2 3) :initial-element nil))
+(princ arr)
+```
+
+```text
+#2A((NIL NIL NIL) (NIL NIL NIL))
+```
+
+Common Lisp 的数组至少可以达到七个维度，每个维度至少可以容纳 1023 个元素。
+
+:initial-element 实参是选择性的。如果有提供这个实参，整个数组会用这个值作为初始值。若试着取出未初始化的数组内的元素，其结果为未定义（undefined）。
+
+用 aref 取出数组内的元素。与 Common Lisp 的存取函数一样， aref 是零索引的（zero-indexed）：
+
+```lisp
+(princ (aref arr 0 0))
+```
+
+```text
+NIL
+```
+
+要替换数组的某个元素，我们使用 setf 与 aref ：
+
+```lisp
+(setf (aref arr 0 0) 'b)
+(princ (aref arr 0 0))
+```
+
+```text
+B
+```
+
+要表示字面常量的数组（literal array），使用 #na 语法，其中 n 是数组的维度。举例来说，我们可以这样表示 arr 这个数组：
+
+```lisp
+(setf num #2a((b nil nil) (nil nil nil)))
+(princ num)
+```
+
+```text
+#2A((B NIL NIL) (NIL NIL NIL))
+```
+
+如果全局变量 **print-array** 为真，则数组会用以下形式来显示：
+
+```lisp
+(setf *print-array* nil)
+(princ arr)
+(setf *print-array* t)
+(print arr)
+```
+
+```text
+#<(SIMPLE-ARRAY T (2 3)) {1002FD499F}>
+#2A((B NIL NIL) (NIL NIL NIL))
+```
+
+```lisp
+(setf vec (make-array 4 :initial-element nil))
+(princ vec)
+```
+
+```text
+#(NIL NIL NIL NIL)
+```
+
+一维数组又称为向量（vector）。你可以通过调用 vector 来一步骤构造及填满向量，向量的元素可以是任何类型：
+
+```lisp
+(princ (vector "a" 'b 3))
+```
+
+```text
+#(a B 3)
+```
+
+字面常量的数组可以表示成 #na ，字面常量的向量也可以用这种语法表达。
+
+可以用 aref 来存取向量，但有一个更快的函数叫做 svref ，专门用来存取向量。
+
+```lisp
+;; 这些都是简单向量
+(vector 1 2 3 4)
+(make-array 5)
+(make-array 5 :initial-element 0)
+
+;; 这些不是简单向量（有特殊属性）
+(make-array 5 :adjustable t)        ; 可调整大小
+(make-array 5 :fill-pointer 0)      ; 有填充指针
+
+;;(svref vec 0)
+;; 创建和访问向量
+;; 创建简单向量
+(defparameter *my-vec* (vector 10 20 30 40 50))
+
+;; 使用 svref 访问元素
+(svref *my-vec* 0)    ; => 10
+(svref *my-vec* 2)    ; => 30
+(svref *my-vec* 4)    ; => 50
+
+;; 遍历简单向量
+(dotimes (i (length *my-vec*))
+  (format t "~A " (svref *my-vec* i)))
+
+```
+
+```text
+10 20 30 40 50
+```
+
+在 svref 内的 “sv” 代表“简单向量”（“simple vector”），所有的向量缺省是简单向量。
+
+
+### 4.2 示例：二叉搜索 (Example: Binary Search) {#4-dot-2-示例-二叉搜索--example-binary-search}
+
+也叫二分查找，需要搜索的序列有序。
+
+```lisp
+(defun bin-search (obj vec)
+  (let ((len (length vec)))
+    (and (not (zerop len))
+         (finder obj vec 0 (- len 1)))))
+
+(defun finder (obj vec start end)
+  (format t "~A~%" (subseq vec start (+ end 1)))
+  (let ((range (- end start)))
+    (if (zerop range)
+        (if (eql obj (aref vec start))
+            obj
+            nil)
+        (let ((mid (+ start (round (/ range 2)))))
+          (let ((obj2 (aref vec mid)))
+            (if (< obj obj2)
+                (finder obj vec start (- mid 1))
+                (if (> obj obj2)
+                    (finder obj vec (+ mid 1) end)
+                    obj)))))))
+(bin-search 3 #(0 1 2 3 4 5 6 7 8 9))
+```
+
+```text
+#(0 1 2 3 4 5 6 7 8 9)
+#(0 1 2 3)
+#(3)
+```
+
+果要找的 range 缩小至一个元素，而如果这个元素是 obj 的话，则 finder 直接返回这个元素，反之返回 nil 。如果 range 大于 1 ，我们設置 middle ( round 返回离实参最近的整数) 為 obj2 。如果 obj 小于 obj2 ，则递归地往向量的左半部寻找。如果 obj 大于 obj2 ，则递归地往向量的右半部寻找。剩下的一个选择是 obj=obj2 ，在这个情况我们找到要找的元素，直接返回这个元素。
+
+
+### 4.3 字符与字符串(Strings and Characters) {#4-dot-3-字符与字符串--strings-and-characters}
+
+字符串是字符组成的向量。我们用一系列由双引号包住的字符，来表示一个字符串常量，而字符 c 用 #\c 表示。
+
+每个字符都有一个相关的整数 ── 通常是 ASCII 码，但不一定是。在多数的 Lisp 实现里，函数 char-code 返回与字符相关的数字，而 code-char 返回与数字相关的字符。
+
+字符比较函数 char&lt; （小于）， char&lt;= （小于等于)， char= （等于)， char&gt;= （大于等于) ， char&gt; （大于)，以及 char/= （不同)。
+
+```lisp
+(princ (sort "elbow" #'char<))
+(print (sort "elbow" #'char>))
+```
+
+```text
+below
+"woleb"
+```
+
+由于字符串是字符向量，序列与数组的函数都可以用在字符串。你可以用 aref 来取出元素，举例来说，
+
+```lisp
+(princ (aref "abc" 1))
+```
+
+```text
+b
+```
+
+但针对字符串可以使用更快的 char 函数：
+
+```lisp
+(princ (char "abc" 1))
+```
+
+```text
+b
+```
+
+可以使用 setf 搭配 char （或 aref ）来替换字符串的元素：
+
+```lisp
+(let ((str (copy-seq "Merlin")))
+ (setf (char str 3) #\k)
+ (princ str))
+```
+
+```text
+Merkin
+```
+
+如果你想要比较两个字符串，你可以使用通用的 equal 函数，但还有一个比较函数，是忽略字母大小写的 string-equal ：
+
+```lisp
+(princ (equal "fred" "fred"))
+(print (equal "fred" "Fred"))
+(print (string-equal "fred" "Fred"))
+```
+
+```text
+T
+NIL
+T
+```
+
+Common Lisp 提供大量的操控、比较字符串的函数。
+
+有许多方式可以创建字符串。最普遍的方式是使用 `format` 。将第一个参数设为 `nil` 来调用 format ，使它返回一个原本会印出来的字符串：
+
+```lisp
+(format t "~A or ~A" "truth" "dare")
+```
+
+```text
+truth or dare
+```
+
+但若你只想把数个字符串连结起来，你可以使用 `concatenate` ，它接受一个特定类型的符号，加上一个或多个序列：
+
+```lisp
+(princ (concatenate 'string "not " "to worry"))
+```
+
+```text
+not to worry
+```
+
+
+### 4.4 列序(Sequences) {#4-dot-4-列序--sequences}
+
+在 Common Lisp 里，序列类型包含了列表与向量（因此也包含了字符串）。有些用在列表的函数，实际上是序列函数，包括 remove 、 length 、 subseq 、 reverse 、 sort 、 every 以及 some 。
+
+```lisp
+(princ (mirror? "abba"))
+```
+
+```text
+T
+```
+
+取出序列元素的函数：给列表使用的 nth ， 给向量使用的 aref 及 svref
+
+Common Lisp 也提供了通用的 elt ，对任何种类的序列都有效：
+
+```lisp
+(princ (elt '(a b c) 1))
+```
+
+```text
+B
+```
+
+使用 elt ，我们可以写一个针对向量来说更有效率的 mirror? 版本：
+
+```lisp
+(defun mirror? (s)
+  (let ((len (length s)))
+    (and (evenp len)
+         (do ((forward 0 (+ forward 1))
+              (back (- len 1) (- back 1)))
+             ((or (> forward back)
+                  (not (eql (elt s forward)
+                            (elt s back))))
+              (> forward back))))))
+(princ (mirror? "abc"))
+(print (mirror? "abba"))
+```
+
+```text
+NIL
+T
+```
+
+这个版本也可用在列表，但这个实现更适合给向量使用。频繁的对列表调用 `elt` 的代价是昂贵的，因为列表仅允许顺序存取，而向量允许随机存取，从任何元素来存取每一个元素都是廉价的。
+
+许多序列函数接受一个或多个由下表所列的标准关键字参数：
+
+| 参数      | 用途       | 缺省值   |
+|---------|----------|-------|
+| :key      | 应用至每个元素的函数 | identity |
+| :test     | 用来比较的函数 | eql      |
+| :from-end | 若为真，反向工作 | nil      |
+| :start    | 起始位置   | 0        |
+| :end      | 若有给定，结束位置 | nil      |
+
+接受所有关键字参数的函数之一是 position ，返回序列中一个元素的位置，未找到时返回 nil 。
+
+```lisp
+(princ (position #\a "fantasia"))
+(print (position #\a "fantasia" :start 3 :end 5))
+```
+
+```text
+1
+4
+```
+
+使用 :from-end 关键字参数：
+
+```lisp
+(princ (position #\a "fantasia" :from-end t))
+```
+
+```text
+7
+```
+
+:key 关键字参数是序列中每个元素在被考虑之前要应用的函数：
+
+```lisp
+(princ (position 'a '((c d) (a b)) :key #'car))
+```
+
+```text
+1
+```
+
+:test 关键字参数接受需要两个实参的函数，并决定何谓成功匹配（默认 eql）。例如匹配列表时通常需要 equal ：
+
+```lisp
+(op
+ (position '(a b) '((a b) (c d)))
+ (position '(a b) '((a b) (c d)) :test #'equal))
+```
+
+```text
+NIL
+0
+```
+
+:test 可以是任何接受两个参数的函数。例如给定 &lt; ，我们可以询问第一个使第一个参数比它小的元素位置：
+
+```lisp
+(op
+ (position 3 '(1 0 7 5) :test #'<))
+```
+
+```text
+2
+```
+
+使用 subseq 与 position ，我们可以写出分开序列的函数。举例来说，这个函数
+
+```lisp
+(defun second-word (str)
+  (let ((p1 (+ (position #\  str) 1)))
+    (subseq str p1 (position #\  str :start p1))))
+
+(op
+ (second-word "Form follows function"))
+```
+
+```text
+follows
+```
+
+要找到满足谓词的元素，其中谓词接受一个实参，我们使用 position-if 。它接受一个函数与序列，并返回第一个满足此函数的元素：
+
+```lisp
+(op
+ (position-if #'oddp '(2 3 4 5)))
+```
+
+```text
+1
+```
+
+position-if 接受除了 :test 之外的所有关键字参数。
+
+有许多相似的函数，如给序列使用的 member 与 member-if 。分别是， find （接受全部关键字参数）与 find-if （接受除了 :test 之外的所有关键字参数）：
+
+```lisp
+(op (find #\a "cat")
+    (find-if #'characterp "ham"))
+```
+
+```text
+a
+h
+```
+
+不同于 member 与 member-if ，它们仅返回要寻找的对象。
+
+通常一个 find-if 的调用，如果解读为 find 搭配一个 :key 关键字参数的话，会显得更清楚。举例来说，表达式
+
+```lisp
+(setf lst '((complete success "Operation finished")
+            (error failure "File not found")
+            (complete success "Data saved")))
+
+(op (find-if #'(lambda (x)
+                 (eql (car x) 'complete))
+             lst))
+
+```
+
+```text
+(COMPLETE SUCCESS Operation finished)
+```
+
+上述代码等同于：
+
+```lisp
+(op (find 'complete lst :key #'car))
+```
+
+```text
+(COMPLETE SUCCESS Operation finished)
+```
+
+函数 remove （22 页）以及 remove-if 通常都可以用在序列。它们跟 find 与 find-if 是一样的关系。另一个相关的函数是 remove-duplicates ，仅保留序列中每个元素的最后一次出现。
+
+```lisp
+(op (remove-duplicates "abracadabra"))
+```
+
+```text
+cdbra
+```
+
+这个函数接受前表所列的所有关键字参数。
+
+函数 reduce 用来把序列压缩成一个值。它至少接受两个参数，一个函数与序列。函数必须是接受两个实参的函数。在最简单的情况下，一开始函数用序列前两个元素作为实参来调用，之后接续的元素作为下次调用的第二个实参，而上次返回的值作为下次调用的第一个实参。最后调用最终返回的值作为 reduce 整个函数的返回值。也就是说像是这样的表达式：
+
+(reduce #'fn '(a b c d))
+等同于 (fn (fn (fn 'a 'b) 'c) 'd)
+
+我们可以使用 reduce 来扩充只接受两个参数的函数。举例来说，要得到三个或多个列表的交集(intersection)，我们可以：
+
+```lisp
+(op (reduce #'intersection '((b r a d 's) (b a d) (c a t))))
+```
+
+```text
+(A)
+```
+
+
+### 4.5 示例：解析日期 (Example: Parsing Dates) {#4-dot-5-示例-解析日期--example-parsing-dates}
+
+作为序列操作的示例，本节演示了如何写程序来解析日期。我们将编写一个程序，可以接受像是 “16 Aug 1980” 的字符串，然后返回一个表示日、月、年的整数列表。
+
+```lisp
+(defun tokens (str test start)
+  (let ((p1 (position-if test str :start start)))
+    (if p1
+        (let ((p2 (position-if #'(lambda (c)
+                                   (not (funcall test c)))
+                               str :start p1)))
+          (cons (subseq str p1 p2)
+                (if p2
+                    (tokens str test p2)
+                    nil)))
+        nil)))
+
+(defun constituent (c)
+  (and (graphic-char-p c)
+       (not (char= c #\ ))))
+```
+
+上述代码包含了某些在这个应用里所需的通用解析函数。第一个函数 tokens ，用来从字符串中取出语元 （token）。给定一个字符串及测试函数，满足测试函数的字符组成子字符串，子字符串再组成列表返回。举例来说，如果测试函数是对字母返回真的 alpha-char-p 函数，我们得到：
+
+```lisp
+(op (tokens "ab12 3cde.f" #'alpha-char-p 0))
+```
+
+```text
+(ab cde f)
+```
+
+所有不满足此函数的字符被视为空白 ── 他们是语元的分隔符，但永远不是语元的一部分。
+
+函数 constituent 被定义成用来作为 tokens 的实参。
+
+在 Common Lisp 里，图形字符是我们可见的字符，加上空白字符。所以如果我们用 constituent 作为测试函数时，
+
+```lisp
+(op (tokens "ab12 3cde.f gh" #'constituent 0))
+```
+
+```text
+(ab12 3cde.f gh)
+```
+
+则语元将会由空白区分出来。
+
+```lisp
+(defun parse-date (str)
+  (let ((toks (tokens str #'constituent 0)))
+    (list (parse-integer (first toks))
+          (parse-month (second toks))
+          (parse-integer (third toks)))))
+
+(defparameter *month-names*
+  #("jan" "feb" "mar" "apr" "may" "jun"
+    "jul" "aug" "sep" "oct" "nov" "dec"))
+
+(defun parse-month (str)
+  (let ((p (position str *month-names*
+                         :test #'string-equal)))
+    (if p
+        (+ p 1)
+        nil)))
+```
+
+上述代码包含了特别为解析日期打造的函数。函数 parse-date 接受一个特别形式组成的日期，并返回代表这个日期的整数列表：
+
+```lisp
+(op (parse-date "16 Aug 1980"))
+```
+
+```text
+(16 8 1980)
+```
+
+parse-date 使用 tokens 来解析日期字符串，接着调用 parse-month 及 parse-integer 来转译年、月、日。要找到月份，调用 parse-month ，由于使用的是 string-equal 来匹配月份的名字，所以输入可以不分大小写。要找到年和日，调用内置的 parse-integer ， parse-integer 接受一个字符串并返回对应的整数。
+
+如果需要自己写程序来解析整数，也许可以这么写：
+
+```lisp
+(defun read-integer (str)
+  (if (every #'digit-char-p str)
+      (let ((accum 0))
+        (dotimes (pos (length str))
+          (setf accum (+ (* accum 10)
+                         (digit-char-p (char str pos)))))
+        accum)
+    nil))
+```
+
+这个定义演示了在 Common Lisp 中，字符是如何转成数字的 ── 函数 digit-char-p 不仅测试字符是否为数字，同时返回了对应的整数。
+
+
+### 4.6 结构 (Structures) {#4-dot-6-结构--structures}
+
+结构可以想成是豪华版的向量。假设你要写一个程序来追踪长方体。你可能会想用三个向量元素来表示长方体：高度、宽度及深度。与其使用原本的 svref ，不如定义像是下面这样的抽象，程序会变得更容易阅读，
+
+```lisp
+(defun block-height (b) (svref b 0))
+```
+
+而结构可以想成是，这些函数通通都替你定义好了的向量。
+
+要想定义结构，使用 defstruct 。在最简单的情况下，只要给出结构及字段的名字便可以了：
+
+```lisp
+(defstruct point
+  x
+  y)
+```
+
+这里定义了一个 point 结构，具有两个字段 x 与 y 。同时隐式地定义了 make-point 、 point-p 、 copy-point 、 point-x 及 point-y 函数。
+
+通过使用宏，Lisp 程序可以写出 Lisp 程序。这是目前所见的明显例子之一。当你调用 defstruct 时，它自动生成了其它几个函数的定义。有了宏以后，你将可以自己来办到同样的事情（如果需要的话，你甚至可以自己写出 defstruct ）。
+
+每一个 make-point 的调用，会返回一个新的 point 。可以通过给予对应的关键字参数，来指定单一字段的值：
+
+```lisp
+(setf p (make-point :x 0 :y 0))
+```
+
+存取 point 字段的函数不仅被定义成可取出数值，也可以搭配 setf 一起使用。
+
+```lisp
+(op (point-x p)
+    (setf (point-y p) 2)
+    p)
+```
+
+```text
+0
+2
+#<0, 2>
+```
+
+定义结构也定义了以结构为名的类型。每个点（point）的类型层级会是，类型 point ，接着是类型 structure ，再来是类型 atom ，最后是 t 类型。所以使用 point-p 来测试某个东西是不是一个点时，也可以使用通用性的函数，像是 typep 来测试。
+
+```lisp
+(op (point-p p)
+    (typep p 'point))
+```
+
+```text
+T
+T
+```
+
+我们可以在本来的定义中，附上一个列表，含有字段名及缺省表达式，来指定结构字段的缺省值。
+
+```lisp
+(defstruct polemic
+  (type (progn
+          (format t "What kind of polemic was it? ")
+          (read)))
+  (effect nil))
+```
+
+```latex
+> (make-polemic)
+What kind of polemic was it? scathing
+#S(POLEMIC :TYPE SCATHING :EFFECT NIL)
+```
+
+如果 make-polemic 调用没有给字段指定初始值，则字段会被设成缺省表达式的值：
+
+结构显示的方式也可以控制，以及结构自动产生的存取函数的字首。以下是做了前述两件事的 point 定义：
+
+```lisp
+(defstruct (point (:conc-name p)     ; 字段访问函数前缀为 p
+                  (:print-function print-point))  ; 自定义打印函数
+  (x 0)  ; x 坐标，默认值 0
+  (y 0)) ; y 坐标，默认值 0
+
+(defun print-point (p stream depth)
+  (format stream "#<~A, ~A>" (px p) (py p)))
+```
+
+:conc-name 关键字参数指定了要放在字段前面的名字，并用这个名字来生成存取函数。预设是 point- ；现在变成只有 p 。不使用缺省的方式使代码的可读性些微降低了，只有在需要常常用到这些存取函数时，你才会想取个短点的名字。
+
+:print-function 是在需要显示结构出来看时，指定用来打印结构的函数 ── 需要显示的情况比如，要在顶层显示时。这个函数需要接受三个实参：要被印出的结构，在哪里被印出，第三个参数通常可以忽略。 [2] 我们会在 7.1 节讨论流（stream）。现在来说，只要知道流可以作为参数传给 format 就好了。
+
+函数 print-point 会用缩写的形式来显示点：
+
+```lisp
+;; 使用默认值创建点
+(setq p1 (make-point))
+;; 打印结果: #<0, 0>
+
+;; 创建指定坐标的点
+(setq p2 (make-point :x 10 :y 20))
+;; 打印结果: #<10, 20>
+
+;; 创建部分指定值的点
+(setq p3 (make-point :x 5))
+;; 打印结果: #<5, 0>
+
+;; 访问字段（由于 :conc-name p，使用 px/py 而不是 point-x/point-y）
+(op (px p2)
+    (py p2))
+
+;; 修改字段
+(setf (px p2) 15)
+(setf (py p2) 25)
+
+(op p2)
+
+
+```
+
+```text
+10
+20
+#<15, 25>
+```
+
+
+### 4.7 示例：二叉搜索树 (Example: Binary Search Tree) {#4-dot-7-示例-二叉搜索树--example-binary-search-tree}
+
+由于 sort 本身系统就有了，极少需要在 Common Lisp 里编写排序程序。本节将演示如何解决一个与此相关的问题，这个问题尚未有现成的解决方案：维护一个已排序的对象集合。本节的代码会把对象存在二叉搜索树里（ binary search tree ）或称作 BST。当二叉搜索树平衡时，允许我们可以在与时间成 log n 比例的时间内，来寻找、添加或是删除元素，其中 n 是集合的大小。
+
+{{< figure src="/images/二叉搜索树.png" >}}
+
+二叉搜索树是一种二叉树，给定某个排序函数，比如 &lt; ，每个元素的左子树都 &lt; 该元素，而该元素 &lt; 其右子树。图 4.4 展示了根据 &lt; 排序的二叉树。
+
+下列代码包含了二叉搜索树的插入与寻找的函数。基本的数据结构会是 node （节点），节点有三个部分：一个字段表示存在该节点的对象，以及各一个字段表示节点的左子树及右子树。可以把节点想成是有一个 car 和两个 cdr 的一个 cons 核（cons cell）。
+
+```lisp
+(defstruct (node (:print-function
+                  (lambda (n s d)
+                    (format s "#<~A>" (node-elt n)))))
+  elt (l nil) (r nil))
+
+(defun bst-insert (obj bst <)
+  (if (null bst)
+      (make-node :elt obj)  ; 空树时创建新节点
+      (let ((elt (node-elt bst)))
+        (if (equal obj elt)
+            bst  ; 元素已存在，直接返回
+            (if (funcall < obj elt)
+                                        ; 插入左子树，重建路径上的所有节点
+                (make-node :elt elt
+                           :l (bst-insert obj (node-l bst) <)
+                           :r (node-r bst))
+                                        ; 插入右子树，重建路径上的所有节点
+                (make-node :elt elt
+                           :r (bst-insert obj (node-r bst) <)
+                           :l (node-l bst)))))))
+
+
+(defun bst-find (obj bst <)
+  (if (null bst)
+      nil
+      (let ((elt (node-elt bst)))
+        (if (equal obj elt)
+            bst  ; 找到返回节点
+            (if (funcall < obj elt)
+                (bst-find obj (node-l bst) <)  ; 左子树查找
+                (bst-find obj (node-r bst) <))))))  ; 右子树查找
+
+(defun bst-min (bst)
+  (and bst
+       (or (bst-min (node-l bst)) bst)))  ; 最左节点
+
+(defun bst-max (bst)
+  (and bst
+       (or (bst-max (node-r bst)) bst)))  ; 最右节点
+
+```
+
+基本操作：
+
+```lisp
+  ;; 创建空树
+(setf tree nil)
+
+;; 插入元素（需要比较函数）
+(setf tree (bst-insert 5 tree #'<))
+(setf tree (bst-insert 3 tree #'<))
+(setf tree (bst-insert 7 tree #'<))
+(setf tree (bst-insert 1 tree #'<))
+(setf tree (bst-insert 9 tree #'<))
+
+(op tree)
+;; 树结构：
+;;       5
+;;      / \
+;;     3   7
+;;    /     \
+;;   1       9
+```
+
+```text
+#<5>
+```
+
+查找操作：
+
+```lisp
+
+(op ;; 查找元素
+    (bst-find 3 tree #'<)  ; => #<3>  (找到节点)
+    (bst-find 8 tree #'<)  ; => NIL   (未找到)
+
+    ;; 查找极值
+    (bst-min tree)  ; => #<1>  (最小值节点)
+    (bst-max tree)  ; => #<9>  (最大值节点)
+    )
+```
+
+```text
+#<3>
+NIL
+#<1>
+#<9>
+```
+
+字符串树示例：
+
+```lisp
+;; 使用字符串比较
+(setf str-tree nil)
+(setf str-tree (bst-insert "apple" str-tree #'string<))
+(setf str-tree (bst-insert "banana" str-tree #'string<))
+(setf str-tree (bst-insert "cherry" str-tree #'string<))
+
+(op (bst-find "banana" str-tree #'string<)
+    (bst-find "cherry" str-tree #'string<)
+    (bst-min str-tree) )
+
+```
+
+```text
+#<banana>
+#<cherry>
+#<apple>
+```
+
+删除操作：
+
+```lisp
+(defun bst-remove (obj bst <)
+  (if (null bst)
+      nil  ; 空树直接返回 nil
+      (let ((elt (node-elt bst)))
+        (if (eql obj elt)
+            (percolate bst)  ; 找到要删除的节点
+            (if (funcall < obj elt)
+                                        ; 在左子树中删除，重建当前节点
+                (make-node :elt elt
+                           :l (bst-remove obj (node-l bst) <)
+                           :r (node-r bst))
+                                        ; 在右子树中删除，重建当前节点
+                (make-node :elt elt
+                           :r (bst-remove obj (node-r bst) <)
+                           :l (node-l bst)))))))
+
+
+(defun percolate (bst)
+  (cond ((null (node-l bst))       ; 情况1：无左子树
+         (if (null (node-r bst))
+             nil                   ; 无子节点，直接删除
+             (rperc bst)))         ; 只有右子树，用右子树替代
+        ((null (node-r bst))        ; 情况2：无右子树
+         (lperc bst))              ; 只有左子树，用左子树替代
+        (t (if (zerop (random 2))  ; 情况3：有两个子树，随机选择
+               (lperc bst)         ; 50%概率用左子树方式
+               (rperc bst)))))     ; 50%概率用右子树方式
+
+(defun rperc (bst)
+  (make-node :elt (node-elt (node-r bst))  ; 用右子节点值替代当前节点
+             :l (node-l bst)               ; 保持左子树不变
+             :r (percolate (node-r bst)))) ; 递归处理右子树
+
+
+(defun lperc (bst)
+  (make-node :elt (node-elt (node-l bst))  ; 用左子节点值替代当前节点
+             :l (percolate (node-l bst))   ; 递归处理左子树
+             :r (node-r bst)))             ; 保持右子树不变
+
+;; 更美观的版本，带树枝连接线
+(defun print-tree-pretty (tree &optional (prefix "") (is-left t))
+  "美观地打印二叉搜索树结构"
+  (when tree
+    ;; 打印右子树
+    (print-tree-pretty (node-r tree)
+                       (concatenate 'string prefix (if is-left "│   " "    "))
+                       nil)
+
+    ;; 打印当前节点
+    (format t "~A" prefix)
+    (format t (if is-left "└── " "┌── "))
+    (format t "~A~%" (node-elt tree))
+
+    ;; 打印左子树
+    (print-tree-pretty (node-l tree)
+                       (concatenate 'string prefix (if is-left "    " "│   "))
+                       t)))
+
+;; 增强版本：带树枝连接
+(defun print-tree-with-branches (tree)
+  "打印带树枝的树形结构"
+  (labels ((get-height (node)
+             (if (null node)
+                 0
+                 (1+ (max (get-height (node-l node))
+                          (get-height (node-r node))))))
+
+           (print-level (nodes level max-level)
+             (when (and nodes (> max-level level))
+               (let ((floor (- max-level level))
+                     (first (zerop level))
+                     (elements (length nodes)))
+
+                 ;; 打印前导空格
+                 (dotimes (i (expt 2 floor))
+                   (format t "  "))
+
+                 ;; 打印节点和连接线
+                 (loop for node in nodes
+                       for i from 0 do
+                         (if node
+                             (format t "~2D" (node-elt node))
+                             (format t "  "))
+
+                         (dotimes (i (- (expt 2 (+ floor 1)) 1))
+                           (format t "  ")))
+
+                 (format t "~%")
+
+                 ;; 如果不是最后一级，打印连接线
+                 (when (not first)
+                   (dotimes (i (expt 2 floor))
+                     (format t "  "))
+
+                   (loop for node in nodes do
+                     (if node
+                         (format t "/\\  ")
+                         (format t "    "))
+
+                     (dotimes (i (- (expt 2 (+ floor 1)) 1))
+                       (format t "  ")))
+
+                   (format t "~%")))
+
+               ;; 递归打印下一级
+               (when (< level max-level)
+                 (print-level (loop for node in nodes
+                                    append (if node
+                                               (list (node-l node) (node-r node))
+                                               (list nil nil)))
+                              (+ level 1)
+                              max-level)))))
+
+    (let ((height (get-height tree)))
+      (print-level (list tree) 0 height))))
+```
+
+打印树形结构：
+
+```lisp
+(defun print-tree (tree &optional (level 0) (position :root) (parent-right nil))
+  "打印二叉搜索树的树形结构"
+  (when tree
+    ;; 先递归打印右子树
+    (print-tree (node-r tree) (+ level 1) :right (eq position :right))
+
+    ;; 打印当前节点
+    (let ((indent (* level 4)))
+      ;; 打印连接线
+      (when (> level 0)
+        (dotimes (i (- indent 2))
+          (format t " "))
+        (case position
+          (:left (format t "└── "))
+          (:right (format t "┌── "))
+          (t (format t ""))))
+
+      ;; 打印节点值
+      (if (> level 0)
+          (format t "~A" (node-elt tree))
+          (format t "~A" (node-elt tree)))
+
+      (format t "~%"))
+
+    ;; 递归打印左子树
+    (print-tree (node-l tree) (+ level 1) :left (eq position :left))))
+```
+
+删除节点示例：
+
+```lisp
+
+;; 创建二叉搜索树
+(setf tree nil)
+(setf tree (bst-insert 5 tree #'<))
+(setf tree (bst-insert 3 tree #'<))
+(setf tree (bst-insert 7 tree #'<))
+(setf tree (bst-insert 1 tree #'<))
+(setf tree (bst-insert 4 tree #'<))
+(setf tree (bst-insert 6 tree #'<))
+(setf tree (bst-insert 9 tree #'<))
+
+;; 树结构：
+;;       5
+;;      / \
+;;     3   7
+;;    / \  / \
+;;   1  4 6   9
+(print-tree tree)
+```
+
+```text
+      ┌── 9
+  ┌── 7
+      └── 6
+5
+      ┌── 4
+  └── 3
+      └── 1
+```
+
+```lisp
+;; 删除叶子节点 (1)
+(setf new-tree (bst-remove 1 tree #'<))
+(print-tree new-tree)
+
+;; 新树结构：
+;;       5
+;;      / \
+;;     3   7
+;;      \  / \
+;;      4 6   9
+```
+
+```text
+      ┌── 9
+  ┌── 7
+      └── 6
+5
+      ┌── 4
+  └── 3
+```
+
+```lisp
+;; 删除有一个子节点的节点 (删除3后，4成为2的子节点)
+(setf new-tree2 (bst-remove 3 new-tree #'<))
+(print-tree new-tree2)
+;; 新树结构：
+;;       5
+;;      / \
+;;     4   7
+;;         / \
+;;        6   9
+
+```
+
+```text
+      ┌── 9
+  ┌── 7
+      └── 6
+5
+  └── 4
+```
+
+```lisp
+;; 删除有两个子节点的根节点 (5)
+(setf new-tree3 (bst-remove 5 new-tree2 #'<))
+;; 结果可能有两种（随机）：
+;; 情况1（选择左子树方式）：       情况2（选择右子树方式）：
+;;       4                         6
+;;      / \                       / \
+;;     NIL 7                     4   7
+;;        / \                       / \
+;;       6   9                     NIL 9
+
+(print-tree new-tree3)
+```
+
+```text
+      ┌── 9
+  ┌── 7
+      └── 6
+4
+```
+
+算法特点
+
+-   不可变数据结构：所有操作返回新树，原树不变
+
+-   随机平衡：删除有两个子节点的节点时随机选择替代策略，有助于避免树的不平衡
+
+-   路径复制：只复制受影响的路径，其他部分共享
+
+-   递归渗透：通过 percolate函数递归处理子树提升
+
+
+### 4.8 哈希表 (Hash Table) {#4-dot-8-哈希表--hash-table}
+
+第三章演示过列表可以用来表示集合（sets）与映射（mappings）。但当列表的长度大幅上升时（或是 10 个元素），使用哈希表的速度比较快。你通过调用 make-hash-table 来构造一个哈希表，它不需要传入参数：
+
+```lisp
+(op (setf ht (make-hash-table)))
+```
+
+```text
+#<HASH-TABLE :TEST EQL :COUNT 0 {1004DCCDC3}>
+```
+
+和函数一样，哈希表总是用 #&lt;...&gt; 的形式来显示。
+
+一个哈希表，与一个关联列表类似，是一种表达对应关系的方式。要取出与给定键值有关的数值，我们调用 gethash 并传入一个键值与哈希表。预设情况下，如果没有与这个键值相关的数值， gethash 会返回 nil 。
+
+```lisp
+(op (gethash 'color ht))
+(setf (gethash 'color ht) 'red)
+(op (multiple-value-list (gethash 'color ht)))
+```
+
+```text
+NIL
+(RED T)
+```
+
+gethash 函数返回两个值，使用 multiple-value-list 将两个返回值转换为列表
+
+[Common Lisp 返回多个值](https://yb.tencent.com/s/1D5CYfdGAoJk)
+
+在这里我们首次看到 Common Lisp 最突出的特色之一：一个表达式竟然可以返回多个数值。函数 gethash 返回两个数值。第一个值是与键值有关的数值，第二个值说明了哈希表是否含有任何用此键值来储存的数值。由于第二个值是 nil ，我们知道第一个 nil 是缺省的返回值，而不是因为 nil 是与 color 有关的数值。
+
+大部分的实现会在顶层显示一个函数调用的所有返回值，但仅期待一个返回值的代码，只会收到第一个返回值。 5.5 节会说明，代码如何接收多个返回值。
+
+要把数值与键值作关联，使用 gethash 搭配 setf ：
+
+```lisp
+(setf (gethash 'color ht) 'red)
+```
+
+存在哈希表的对象或键值可以是任何类型。举例来说，如果我们要保留函数的某种讯息，我们可以使用哈希表，用函数作为键值，字符串作为词条（entry）：
+
+```lisp
+(setf bugs (make-hash-table))
+(push "Doesn't take keyword arguments."
+      (gethash #'our-member bugs))
+(maphash #'(lambda (k v)
+             (format t "~A = ~A~%" k v))
+         bugs)
+```
+
+```text
+#<FUNCTION OUR-MEMBER> = (Doesn't take keyword arguments.)
+```
+
+可以用哈希表来取代用列表表示集合。当集合变大时，哈希表的查询与移除会来得比较快。要新增一个成员到用哈希表所表示的集合，把 gethash 用 setf 设成 t ：
+
+```lisp
+(setf fruit (make-hash-table))
+(setf (gethash 'apricot fruit) t)
+(op (multiple-value-list (gethash 'apricot fruit)))
+```
+
+```text
+(T T)
+```
+
+要从集合中移除一个对象，你可以调用 remhash ，它从一个哈希表中移除一个词条：
+
+```lisp
+(op (remhash 'apricot fruit))
+```
+
+```text
+T
+```
+
+哈希表有一个迭代函数： maphash ，它接受两个实参，接受两个参数的函数以及哈希表。该函数会被每个键值对调用，没有特定的顺序：
+
+```lisp
+(setf (gethash 'shape ht) 'spherical
+      (gethash 'size ht) 'giant)
+(maphash #'(lambda (k v)
+             (format t "~A = ~A~%" k v))
+         ht)
+
+```
+
+```text
+COLOR = RED
+SHAPE = SPHERICAL
+SIZE = GIANT
+```
+
+maphash 总是返回 nil ，但你可以通过传入一个会累积数值的函数，把哈希表的词条存在列表里。
+
+哈希表可以容纳任何数量的元素，但当哈希表空间用完时，它们会被扩张。如果你想要确保一个哈希表，从特定数量的元素空间大小开始时，可以给 make-hash-table 一个选择性的 :size 关键字参数。做这件事情有两个理由：因为你知道哈希表会变得很大，你想要避免扩张它；或是因为你知道哈希表会是很小，你不想要浪费内存。 :size 参数不仅指定了哈希表的空间，也指定了元素的数量。平均来说，在被扩张前所能够容纳的数量。所以
+
+```lisp
+(make-hash-table :size 5)
+```
+
+会返回一个预期存放五个元素的哈希表。
+
+和任何牵涉到查询的结构一样，哈希表一定有某种比较键值的概念。预设是使用 eql ，但你可以提供一个额外的关键字参数 :test 来告诉哈希表要使用 eq ， equal ，还是 equalp ：
+
+```lisp
+(setf writers (make-hash-table :test #'equal))
+(setf (gethash '(ralph waldo emerson) writers) t)
+(maphash #'(lambda (k v)
+             (format t "~A = ~A~%" k v))
+         writers)
+```
+
+```text
+(RALPH WALDO EMERSON) = T
+```
+
+这是一个让哈希表变得有效率的取舍之一。有了列表，我们可以指定 member 为判断相等性的谓词。有了哈希表，我们可以预先决定，并在哈希表构造时指定它。
+
+大多数 Lisp 编程的取舍（或是生活，就此而论）都有这种特质。起初你想要事情进行得流畅，甚至赔上效率的代价。之后当代码变得沉重时，你牺牲了弹性来换取速度。
+
+
+## 总结(Summary) {#总结--summary}
+
+1.  Common Lisp 支持至少 7 个维度的数组。一维数组称为向量。
+
+2.  字符串是字符的向量。字符本身就是对象。
+
+3.  序列包括了向量与列表。许多序列函数都接受标准的关键字参数。
+
+4.  处理字符串的函数非常多，所以用 Lisp 来解析字符串是小菜一碟。
+
+5.  调用 defstruct 定义了一个带有命名字段的结构。它是一个程序能写出程序的好例子。
+
+6.  二叉搜索树见长于维护一个已排序的对象集合。
+
+7.  哈希表提供了一个更有效率的方式来表示集合与映射 (mappings)。
+
+
+## 习题 (Exercises) {#习题--exercises}
+
+(1) 定义一个函数，接受一个平方数组（square array，一个相同维度的数组 (n n) )，并将它顺时针转 90 度。
+
+```lisp
+(defun quarter-turn (arr)
+  (let ((a (aref arr 0 0))
+        (b (aref arr 0 1))
+        (c (aref arr 1 0))
+        (d (aref arr 1 1))))
+  #2a((c a) (d b)))
+
+(op (quarter-turn #2A((a b) (c d))))
+```
+
+```text
+#2A((C A) (D B))
+```
+
+(2) 使用 reduce 来定义以下函数：
+
+(a) copy-list
+
+```lisp
+(defun my-copy-list-slow (lst)
+  (reduce #'(lambda (acc item)
+              (append acc (list item)))
+          lst
+          :initial-value nil))
+
+(defun my-copy-list (lst)
+  "更高效的实现"
+  (reverse (reduce #'(lambda (acc item) (cons item acc))
+                   lst
+                   :initial-value nil)))
+
+(op (my-copy-list-slow '(a b c)))
+(op (my-copy-list '(a b c (d e h))))
+```
+
+```text
+(A B C)
+(A B C (D E H))
+```
+
+(b) reverse（针对列表）
+
+```lisp
+(defun my-reverse (lst)
+  (reduce #'(lambda (acc item) (cons item acc))
+          lst
+          :initial-value nil))
+
+(op (my-reverse '(a b c)))
+```
+
+```text
+(C B A)
+```
+
+(3) 定义一个函数，接受一棵二叉搜索树，并返回由此树元素所组成的，一个由大至小排序的列表。
+
+```lisp
+(defun bst-inorder (bst)
+  "中序遍历：右子树 -> 根节点 -> 左子树（对于BST会得到有序序列）"
+  (when bst
+    (append (bst-inorder (node-r bst))
+            (list (node-elt bst))
+            (bst-inorder (node-l bst)))))
+;; 创建空树
+(setf tree nil)
+;; 插入元素（需要比较函数）
+(setf tree (bst-insert 5 tree #'<))
+(setf tree (bst-insert 3 tree #'<))
+(setf tree (bst-insert 7 tree #'<))
+(setf tree (bst-insert 1 tree #'<))
+(setf tree (bst-insert 9 tree #'<))
+
+(print-tree tree)
+(op (bst-inorder tree))
+```
+
+```text
+      ┌── 9
+  ┌── 7
+5
+  └── 3
+      └── 1
+(9 7 5 3 1)
+```
+
+(5) 定义 bst-adjoin 。这个函数应与 bst-insert 接受相同的参数，但应该只在对象不等于任何树中对象时将其插入。同 bst-insert
+
+(6) 任何哈希表的内容可以由关联列表（assoc-list）来描述，其中列表的元素是 (k . v) 的形式，对应到哈希表中的每一个键值对。定义一个函数：
+
+(a) 接受一个关联列表，并返回一个对应的哈希表。
+
+```lisp
+(defun assoc2hash (trans)
+  (let ((ht (make-hash-table)))
+    (mapcar #'(lambda (x)
+                (setf (gethash (car x) ht) (cdr x)))
+            trans)
+    ht))
+
+(setf ht (assoc2hash '((+ . "add") (- . "sub") (nmae . "Jason"))))
+
+(maphash #'(lambda (k v)
+           (format t "~A = ~A~%" k v))
+       ht)
+```
+
+```text
++ = add
+- = sub
+NMAE = Jason
+```
+
+(b) 接受一个哈希表，并返回一个对应的关联列表。
+
+```lisp
+(defun hash2assoc (ht)
+  (let ((assoc nil))
+    (maphash #'(lambda (k v)
+                 ;;(format t "~A = ~A~%" k v)
+                 (push (cons k v) assoc))
+             ht)
+    assoc))
+
+(setf ass (hash2assoc ht))
+(op ass)
+```
+
+```text
+((NMAE . Jason) (- . sub) (+ . add))
+```

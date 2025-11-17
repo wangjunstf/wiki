@@ -11,9 +11,12 @@ draft: false
 ### 顶层const和底层const {#顶层const和底层const}
 
 -   核心区别：
-    -   顶层const：
-        -   指对象本身是常量
-        -   修饰变量本身
+
+    -   指对象本身是常量
+    -   修饰变量本身
+
+    <!--listend-->
+
     -   底层const：
         -   指针或引用所指向的对象是常量
         -   修饰指针或引用指向的对象：表示不能通过指针或引用修改其指向的对象
@@ -2268,3 +2271,108 @@ a2 = {0};  // 错误：不能将一个花括号列表赋予数组。
 
 
 #### 9.2.7 关系运算符 {#9-dot-2-dot-7-关系运算符}
+
+每个容器都支持相等运算符（== 和 !=）；除了无序关联容器外的所有容器都支持关系运算符（&gt;、&gt;=、&lt;、&lt;=）。关系运算符要求左边两边的运算对象必须是相同的类型。
+
+-   两个容器相等的条件：两个容器具有相同的大小且所有元素都两两对应相等。
+
+-   如果两个容器大小不同，如果较小容器中每个元素都等于较大容器中的对应元素，则较小容器小于较大容器：
+    ````cpp
+    vector<int> vec1 = {1,2,3,4,5};
+    vector<int> vec2 = {1,2,3};
+
+    // vec2 < vec1
+    ````
+
+<!--listend-->
+
+-   如果两个容器都不是另一个容器的前缀子序列，则比较的结果取决于第一个不相等的元素的比较结果。
+
+
+#### 容器的关系运算符使用元素的关系运算符完成比较 {#容器的关系运算符使用元素的关系运算符完成比较}
+
+只有当其元素类型也定义了相应的比较运算符时，我们才可以使用关系运算符来比较两个容器。
+
+-   容器的相等运算符实际使用元素的 == 运算符实现。
+-   而其他关系运算符是使用元素的  &lt; 运算符。
+
+<!--listend-->
+
+-   9.2.7 节练习
+    -   练习 9.15
+        ````cpp
+        #include <iostream>
+        #include <vector>
+
+        using namespace std;
+
+        int main(){
+          vector<int> vec1 = {1,2,4,5,3};
+          vector<int> vec2 = {1,2,5,7,3};
+
+          cout << "vec1 < vec2: " << (vec1<vec2?"true":"false") << endl;
+          return 0;
+        }
+        ````
+
+<!--listend-->
+
+-   练习 9.16
+    ````cpp
+    #include <iostream>
+    #include <list>
+    #include <vector>
+
+    using namespace std;
+
+    bool compare(list<int> lst, vector<int> vec) {
+      auto it_lst = lst.cbegin();
+      auto it_vec = vec.cbegin();
+
+      while (it_lst != lst.cend() && it_vec != vec.cend()) {
+        if (*it_lst != *it_vec) {
+          if(*it_lst > *it_vec)
+            return true;
+          else
+            return false;
+        }
+        ++it_lst;
+        ++it_vec;
+      }
+
+      if(it_lst != lst.cend()){
+        return true;
+      }else{
+        return false;
+      }
+    }
+
+    int main() {
+      vector<int> vec1 = {1, 2, 4, 5, 3};
+      list<int> vec2 = {1, 2, 4,5,3,5};
+
+      cout << "vec2 > vec1: " << (compare(vec2,vec1)?"true":"false") << endl;
+      return 0;
+    }
+    ````
+
+<!--listend-->
+
+-   练习 9.17
+    容器元素必须定义比较运算符
+
+
+### 9.3 顺序容器操作 {#9-dot-3-顺序容器操作}
+
+顺序容器和关联容器的不同之处在于：元素如何存储、访问、添加以及删除。
+
+
+#### 9.3.1 向顺序容器添加元素 {#9-dot-3-dot-1-向顺序容器添加元素}
+
+除了 array 外，所有标准容器都支持动态添加或删除元素来改变容器的大小。
+
+<!--list-separator-->
+
+-  向顺序容器添加元素的操作
+
+    {{< figure src="/images/向顺序容器添加元素.png" >}}
